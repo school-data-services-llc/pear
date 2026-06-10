@@ -46,16 +46,34 @@ def build_basic_auth_headers(username: str, password: str):
     token = base64.b64encode(f"{username}:{password}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
 
-def get_assignment_summary(assignment_id: str, headers: dict):
+def get_assignment_summary(
+    assignment_id: str,
+    headers: dict,
+    max_retries: int = 3,
+    backoff_seconds: int = 5,
+):
     url = f"https://data.edulastic.com/assignment-summary?assignment_id={assignment_id}"
-    try:
-        timeout_ = 90
-        response = requests.get(url, headers=headers, timeout=timeout_)
 
-        return response
-    except requests.RequestException as e:
-        print("request failed assignment_id:", assignment_id, "error:", e)
-        return None
+    for attempt in range(1, max_retries + 1):
+        try:
+            timeout_ = 90
+            response = requests.get(url, headers=headers, timeout=timeout_)
+            if response.status_code == 200:
+                return response
+            logging.warning(
+                f"Assignment summary request failed for {assignment_id} with status {response.status_code} "
+                f"(attempt {attempt}/{max_retries})"
+            )
+        except requests.RequestException as e:
+            logging.warning(
+                f"Assignment summary request failed for {assignment_id}: {e} "
+                f"(attempt {attempt}/{max_retries})"
+            )
+
+        if attempt < max_retries:
+            time.sleep(backoff_seconds * attempt)
+
+    raise RuntimeError(f"Assignment summary API failed for {assignment_id} after {max_retries} attempts.")
 
 
 
@@ -63,18 +81,27 @@ def get_assignment_summaries(df_assessments: list, username: str, password: str)
     """Loop over DataFrame assessment_ids using one precomputed header."""
     headers = build_basic_auth_headers(username, password)
     holding_list = []
-    for aid in df_assessments:
-        print(aid)  
+    for idx, aid in enumerate(df_assessments, 1):
+        logging.info(f"Fetching assignment summary for {aid} ({idx}/{len(df_assessments)})")
         resp = get_assignment_summary(aid, headers)
-        if resp.status_code == 200:
-            try:
-                response_data = pd.DataFrame(resp.json())
-                holding_list.append(response_data)
-            except Exception as e:
+        try:
+            if resp.text.strip() == "":
                 logging.info(f'No data available for {aid}, status code: {resp.status_code if resp else "No Response"}')
-        else:
-            logging.info(f'Failed to retrieve assessment_id {aid}, status code: {resp.status_code if resp else "No Response"}')
+            else:
+                response_data = pd.DataFrame(resp.json())
+                if response_data.empty:
+                    logging.info(f'No data available for {aid}, status code: {resp.status_code if resp else "No Response"}')
+                else:
+                    holding_list.append(response_data)
+        except ValueError:
+            body_preview = resp.text.strip()[:200]
+            logging.info(
+                f"No summary data available for {aid}; response was not valid JSON. "
+                f"Body preview: {body_preview!r}"
+            )
 
+    if not holding_list:
+        raise RuntimeError("No assignment summaries were collected. Full refresh is incomplete; stopping before upload.")
     results = pd.concat(holding_list, ignore_index=True)
     results = convert_epoch_columns(results)
     logging.info(f'The number of unique assessments in the results frame is {results["assessment_group_id"].nunique()}')

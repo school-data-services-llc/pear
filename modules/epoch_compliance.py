@@ -6,26 +6,39 @@ import logging
 from zoneinfo import ZoneInfo
 
 
-def get_updated_assignments(username: str, password: str, date: int):
+def get_updated_assignments(username: str, password: str, date: int, max_retries: int = 3, backoff_seconds: int = 5):
     url = f"https://data.edulastic.com/assignment-list?date={date}"
-    
-    try:
-        response = requests.get(url, auth=(username, password))
-        print(f"Date: {datetime.utcfromtimestamp(date).strftime('%Y-%m-%d')} | Status: {response.status_code}")
 
-        if response.status_code == 200:
-            data = response.json()
-            print(data)
-            if data:
-                logging.info(f"Assignments retrieved for {date}")
-                return pd.DataFrame(data)
-        elif response.status_code == 401:
-            print("⚠️ Unauthorized — check username, password, or permissions.")
-        else:
-            print(f"⚠️ Unexpected status: {response.status_code}")
-            
-    except requests.RequestException as e:
-        print("Request failed:", e)
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.get(url, auth=(username, password), timeout=35)
+            print(f"Date: {datetime.utcfromtimestamp(date).strftime('%Y-%m-%d')} | Status: {response.status_code}")
+
+            if response.status_code == 200:
+                data = response.json()
+                print(data)
+                if data:
+                    logging.info(f"Assignments retrieved for {date}")
+                    return pd.DataFrame(data)
+                return None
+
+            logging.warning(
+                f"Assignment-list request failed for {date} with status {response.status_code} "
+                f"(attempt {attempt}/{max_retries})"
+            )
+        except (requests.RequestException, ValueError) as e:
+            logging.warning(
+                f"Assignment-list request failed for {date}: {e} "
+                f"(attempt {attempt}/{max_retries})"
+            )
+
+        if attempt < max_retries:
+            time.sleep(backoff_seconds * attempt)
+
+    raise RuntimeError(
+        f"Assignment-list API failed for {datetime.utcfromtimestamp(date).strftime('%Y-%m-%d')} "
+        f"after {max_retries} attempts. Full refresh is incomplete; stopping before upload."
+    )
 
     return None
 
