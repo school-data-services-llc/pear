@@ -125,11 +125,11 @@ def make_view_summaries(df, year, client):
     nan_str = (df['local_student_id'].astype(str).str.strip() == 'nan').sum()
     logging.info(f"[Summaries view] Rows with null local_student_id before grade merge: {null_local} (incl. {nan_str} 'nan' string). These get null grade. See '[studentsisid]' logs for breakdown: missing in raw PEAR vs not found in PowerSchool.")
 
-    query = """
+    query = f"""
     SELECT student_number as local_student_id,
     grade_level as grade
     FROM `icef-437920.views.student_to_teacher`
-    WHERE year = '25-26'
+    WHERE year = '{year}'
     """
     temp = client.query(query).to_dataframe()
 
@@ -168,11 +168,11 @@ def make_view_assignments(df, year, client):
                 'standard_notation': 'standard_code',
                 'percent_score': 'score'}, inplace=True)
     
-    query = """
+    query = f"""
     SELECT student_number as local_student_id,
     grade_level as grade
     FROM `icef-437920.views.student_to_teacher`
-    WHERE year = '25-26'
+    WHERE year = '{year}'
     """
     temp = client.query(query).to_dataframe()
 

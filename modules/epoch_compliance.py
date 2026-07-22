@@ -6,6 +6,52 @@ import logging
 from zoneinfo import ZoneInfo
 
 
+def resolve_date_range(start_date: datetime):
+    """Normalize start_date to America/Chicago and return (start_date, end_date=now)."""
+    tz = ZoneInfo("America/Chicago")
+    if start_date.tzinfo is None:
+        start_date = start_date.replace(tzinfo=tz)
+    else:
+        start_date = start_date.astimezone(tz)
+    return start_date, datetime.now(tz)
+
+
+def is_date_range_active(start_date: datetime) -> bool:
+    start_date, end_date = resolve_date_range(start_date)
+    return start_date <= end_date
+
+
+def filter_frame_to_date_range(df, date_col, start_date, end_date=None):
+    """Keep rows whose date_col falls within [start_date, end_date]."""
+    if df is None or df.empty:
+        return df
+    if date_col not in df.columns:
+        logging.warning(
+            f"No '{date_col}' column to filter by date range; returning unfiltered frame"
+        )
+        return df
+
+    if end_date is None:
+        start_date, end_date = resolve_date_range(start_date)
+
+    col = pd.to_datetime(df[date_col], utc=True, errors="coerce")
+    start = pd.Timestamp(start_date)
+    end = pd.Timestamp(end_date)
+    if start.tzinfo is None:
+        start = start.tz_localize("America/Chicago")
+    if end.tzinfo is None:
+        end = end.tz_localize("America/Chicago")
+    start = start.tz_convert("UTC")
+    end = end.tz_convert("UTC")
+
+    filtered = df.loc[(col >= start) & (col <= end)].copy()
+    logging.info(
+        f"Date filter on {date_col}: {len(df)} -> {len(filtered)} rows "
+        f"(start={start_date}, end={end_date})"
+    )
+    return filtered
+
+
 def get_updated_assignments(username: str, password: str, date: int, max_retries: int = 3, backoff_seconds: int = 5):
     url = f"https://data.edulastic.com/assignment-list?date={date}"
 
@@ -43,10 +89,8 @@ def get_updated_assignments(username: str, password: str, date: int, max_retries
     return None
 
 
-def collect_daily_assignments(username: str, password: str, delay_seconds: int = 1):
-    tz = ZoneInfo("America/Chicago")
-    start_date = datetime(2025, 8, 1, tzinfo=tz)
-    end_date = datetime.now(tz)
+def collect_daily_assignments(username: str, password: str, start_date: datetime, delay_seconds: int = 1):
+    start_date, end_date = resolve_date_range(start_date)
     
     all_results = []
 

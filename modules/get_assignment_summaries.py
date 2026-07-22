@@ -4,6 +4,8 @@ from pathlib import Path
 import base64
 import logging
 import time
+from datetime import datetime
+from .epoch_compliance import resolve_date_range, filter_frame_to_date_range
 
 def convert_epoch_columns(df, inplace=True):
     """
@@ -77,10 +79,23 @@ def get_assignment_summary(
 
 
 
-def get_assignment_summaries(df_assessments: list, username: str, password: str):
-    """Loop over DataFrame assessment_ids using one precomputed header."""
+def get_assignment_summaries(
+    df_assessments: list,
+    username: str,
+    password: str,
+    start_date: datetime = None,
+):
+    """Loop over assessment_ids using one precomputed header; optionally filter to start_date range."""
+    if not df_assessments:
+        logging.info("No assignment IDs to fetch summaries for")
+        return None
+
     headers = build_basic_auth_headers(username, password)
     holding_list = []
+    end_date = None
+    if start_date is not None:
+        start_date, end_date = resolve_date_range(start_date)
+
     for idx, aid in enumerate(df_assessments, 1):
         logging.info(f"Fetching assignment summary for {aid} ({idx}/{len(df_assessments)})")
         resp = get_assignment_summary(aid, headers)
@@ -101,9 +116,24 @@ def get_assignment_summaries(df_assessments: list, username: str, password: str)
             )
 
     if not holding_list:
-        raise RuntimeError("No assignment summaries were collected. Full refresh is incomplete; stopping before upload.")
+        logging.warning("No assignment summaries were collected.")
+        return None
     results = pd.concat(holding_list, ignore_index=True)
     results = convert_epoch_columns(results)
+    if start_date is not None and end_date is not None:
+        date_col = "submitted_date" if "submitted_date" in results.columns else None
+        if date_col is None:
+            for candidate in ("opendate", "duedate", "closedate"):
+                if candidate in results.columns:
+                    date_col = candidate
+                    break
+        if date_col:
+            results = filter_frame_to_date_range(results, date_col, start_date, end_date)
+        else:
+            logging.warning("No date column found on summaries to apply start_date range")
+        if results is None or results.empty:
+            logging.warning("No summary rows remain after applying start_date range.")
+            return None
     logging.info(f'The number of unique assessments in the results frame is {results["assessment_group_id"].nunique()}')
     return results
 
