@@ -3,7 +3,7 @@ import os
 from google.cloud import bigquery
 
 
-MIN_UPLOAD_ROW_RATIO = 0.95
+MIN_UPLOAD_ROW_RATIO = 0.99
 
 
 def get_previous_upload_row_count(client, table_name, dag_name):
